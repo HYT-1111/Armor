@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Destiny2 Armor</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- DataTables CSS -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    h1 { font-size: 2em; }
+    h2, h3 { margin: 1em 0 0.3em 0; }
+    table.data-table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 4px; text-align: center; }
+    th { background: #eee; }
+    .group-1 { background-color: #f8f9fa !important; }
+    .group-2 { background-color: #e3f2fd !important; }
+    .group-3 { background-color: #f3e5f5 !important; }
+    .group-4 { background-color: #e8f5e8 !important; }
+    .group-5 { background-color: #fff3e0 !important; }
+    .group-6 { background-color: #fce4ec !important; }
+    .group-7 { background-color: #f1f8e9 !important; }
+    .group-8 { background-color: #e0f2f1 !important; }
+    .group-9 { background-color: #fff8e1 !important; }
+    .group-10 { background-color: #f3e5f5 !important; }
+    .legendary-header { color: #9c27b0; font-weight: bold; }
+    .exotic-header { color: #ff6b35; font-weight: bold; }
+    .perks-column { max-width: 400px; word-wrap: break-word; font-size: 0.85em; line-height: 1.3; }
+    .base-stat { font-weight: bold; min-width: 60px; }
+  </style>
+</head>
+<body>
+  <h1>Destiny2 Armor</h1>
+  <form id="csv-form">
+    <input type="file" id="csv-file" accept=".csv" required>
+    <label>
+      <input type="checkbox" id="include-exotic"> Exoticアイテムも含める
+    </label>
+    <button type="submit">アップロード</button>
+  </form>
+  <div id="help" style="margin: 24px 0 16px 0; background: #f5f5f5; padding: 16px; border-radius: 5px;">
+    <h3>処理内容</h3>
+    <ul>
+      <li>3つのベース値が0で、かつ「同じ3項目が0」のアイテムが2つ以上存在する防具のみ表示</li>
+    </ul>
+  </div>
+  <div id="output"></div>
+
+  <!-- JSライブラリ読み込み -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+  <script>
+
+    const IGNORE_PERKS_CLASS_ITEM = [
+      "配給", "奉仕", "爆撃手", "ユーティリティーキックスタート", "クラスの泉", "時間膨張",
+      "接近防御", "回復のフィニッシャー", "スペシャル・フィニッシャー", "ワン・ツー・フィニッシャー",
+      "バルウォーク・フィニッシャー", "ヘルシー・フィニッシャー", "スナップロード・フィニッシャー",
+      "エクスプローシブ・フィニッシャー", "ユーティリティー・フィニッシャー", "ベネヴォレント・フィニッシャー",
+      "致命的打撃", "死神", "強力誘引"
+    ];
+
+ 
+    const baseStatOrder = [
+      "Health (Base)",
+      "Melee (Base)",
+      "Grenade (Base)",
+      "Super (Base)",
+      "Class (Base)",
+      "Weapons (Base)"
+    ];
+
+
+    function getFilteredPerks(row) {
+      const perkColumns = [];
+      for (let i = 0; i < 8; i++) {
+        perkColumns.push("Perks " + i);
+      }
+      let perks = [];
+      for (const col of perkColumns) {
+        if (row[col] && row[col].trim() !== "") {
+          if (row["Type"] === "Class Item" && IGNORE_PERKS_CLASS_ITEM.includes(row[col].trim())) continue;
+          perks.push(row[col].trim());
+        }
+      }
+      return perks.join(", ");
+    }
+
+    // Main
+    document.getElementById("csv-form").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const fileInput = document.getElementById("csv-file");
+      const includeExotic = document.getElementById("include-exotic").checked;
+      if (fileInput.files.length === 0) return;
+      Papa.parse(fileInput.files[0], {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          renderFilteredTable(results.data, includeExotic);
+        }
+      });
+    });
+
+
+    function renderFilteredTable(rows, includeExotic) {
+
+      let data = rows.filter(r => r["Type"] !== "Armor Parts");
+      if (!includeExotic) data = data.filter(r => r["Rarity"] !== "Exotic");
+
+ 
+      data = data.map(row => {
+        row._zeroBools = baseStatOrder.map(col => Number(row[col]||0) === 0);
+        row._zeroCount = row._zeroBools.filter(z => z).length;
+        row._zeroCols = baseStatOrder.filter((col, i) => row._zeroBools[i]).join(", ");
+        if (includeExotic) row["Filtered Perks"] = getFilteredPerks(row);
+        return row;
+      }).filter(row => row._zeroCount === 3);
+
+  
+      const groupMap = new Map();
+      data.forEach(row => {
+        let key = [
+          row["Name"], row["Equippable"], row["Type"], row._zeroCols
+        ];
+        if (includeExotic) key.push(row["Filtered Perks"]);
+        const keyStr = key.join("||");
+        if (!groupMap.has(keyStr)) groupMap.set(keyStr, []);
+        groupMap.get(keyStr).push(row);
+      });
+
+   
+      let groupedResults = [];
+      let groupCounter = {};
+      let groupIndex = 1;
+      groupMap.forEach((arr, keyStr) => {
+        if (arr.length >= 2) {
+     
+          arr.forEach(row => {
+            if (!groupCounter[keyStr]) groupCounter[keyStr] = groupIndex++;
+            row.Group = groupCounter[keyStr];
+            row.zeroCols = row._zeroCols;
+          });
+          groupedResults.push(...arr);
+        }
+      });
+
+
+      groupedResults.sort((a, b) => {
+        const rarityOrder = {"Exotic": 0, "Legendary": 1};
+        const aR = rarityOrder[a["Rarity"]] ?? 2, bR = rarityOrder[b["Rarity"]] ?? 2;
+        if (aR !== bR) return aR - bR;
+        if (a["Equippable"] !== b["Equippable"]) return a["Equippable"].localeCompare(b["Equippable"]);
+        if (a["Type"] !== b["Type"]) return a["Type"].localeCompare(b["Type"]);
+        if (a.zeroCols !== b.zeroCols) return a.zeroCols.localeCompare(b.zeroCols);
+        return (a["Name"] || "").localeCompare(b["Name"] || "");
+      });
+
+
+      let columns = [
+        { title: "Group", data: "Group" },
+        { title: "Name", data: "Name" },
+        { title: "Tier", data: "Tier" },
+        { title: "Type", data: "Type" },
+        { title: "Equippable", data: "Equippable" },
+        { title: "Power", data: "Power" },
+        { title: "Rarity", data: "Rarity" },
+        { title: "Archetype", data: "Archetype" },
+      ];
+      baseStatOrder.forEach(col => columns.push({title: col, data: col, className: "base-stat"}));
+      columns.push({title: "Total (Base)", data: "Total (Base)"});
+      columns.push({title: "Zero Columns", data: "zeroCols"});
+      if (includeExotic) columns.push({title: "Filtered Perks", data: "Filtered Perks", className: "perks-column"});
+
+
+      let outputHTML = "";
+      ["Exotic", "Legendary"].forEach(rarity => {
+        const group = groupedResults.filter(r => r["Rarity"] === rarity);
+        if (group.length === 0) return;
+        outputHTML += `<h2 class="${rarity === "Exotic" ? "exotic-header" : "legendary-header"}">Rarity: ${rarity}</h2>`;
+
+        const byEq = {};
+        group.forEach(r => {
+          byEq[r["Equippable"]] = byEq[r["Equippable"]] || [];
+          byEq[r["Equippable"]].push(r);
+        });
+        for (const [eq, eqGroup] of Object.entries(byEq)) {
+          outputHTML += `<h3>Equippable: ${eq}</h3>`;
+
+          const byType = {};
+          eqGroup.forEach(r => {
+            byType[r["Type"]] = byType[r["Type"]] || [];
+            byType[r["Type"]].push(r);
+          });
+          for (const [type, typeGroup] of Object.entries(byType)) {
+            outputHTML += `<h4>Type: ${type}</h4>`;
+            outputHTML += `<table class="data-table" id="table-${rarity}-${eq}-${type.replace(/\s/g,"")}" style="margin-bottom:2em;"></table>`;
+  
+            setTimeout(() => {
+              $(`#table-${rarity}-${eq}-${type.replace(/\s/g,"")}`).DataTable({
+                data: typeGroup,
+                columns: columns,
+                paging: false,
+                info: false,
+                ordering: false,
+                searching: false,
+                createdRow: function(row, data) {
+                  let groupNum = data.Group;
+                  if (groupNum <= 10) {
+                    $(row).addClass('group-' + groupNum);
+                  }
+                }
+              });
+            }, 0);
+          }
+        }
+      });
+      document.getElementById("output").innerHTML = outputHTML;
+    }
+  </script>
+</body>
+</html>

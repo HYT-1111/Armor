@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <title>Destiny2 Armor</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <!-- DataTables CSS -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
-    h1 { font-size: 2em; }
-    h2, h3 { margin: 1em 0 0.3em 0; }
+    #archetype-select-area { margin: 24px 0 16px 0; }
+    #archetype-select { min-width: 220px; min-height: 2.5em; }
+    #selected-archetype-order { margin: 0.5em 0 1em 0; font-size: 1em; }
+    .selected-order-label { font-weight: bold; color: #3366cc; margin-right: 8px; }
+    .reset-btn { margin-left: 8px; padding: 2px 8px; font-size: 0.95em; }
     table.data-table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 4px; text-align: center; }
     th { background: #eee; }
@@ -44,14 +46,21 @@
       <li>3つのベース値が0で、かつ「同じ3項目が0」のアイテムが2つ以上存在する防具のみ表示</li>
     </ul>
   </div>
+  <div id="archetype-select-area" style="display:none;">
+    <label for="archetype-select"><b>Archetype並び順・絞り込み:</b></label>
+    <select id="archetype-select" multiple size="6"></select>
+    <button id="archetype-apply" type="button">並び替え/絞り込み適用</button>
+    <button id="archetype-reset-all" type="button" class="reset-btn">全選択</button>
+    <button id="archetype-clear-all" type="button" class="reset-btn">全解除</button>
+    <div id="selected-archetype-order"></div>
+    <span style="font-size:0.9em;">※クリック順に選択順が反映</span>
+  </div>
   <div id="output"></div>
 
-  <!-- JSライブラリ読み込み -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
   <script>
-
     const IGNORE_PERKS_CLASS_ITEM = [
       "配給", "奉仕", "爆撃手", "ユーティリティーキックスタート", "クラスの泉", "時間膨張",
       "接近防御", "回復のフィニッシャー", "スペシャル・フィニッシャー", "ワン・ツー・フィニッシャー",
@@ -59,17 +68,24 @@
       "エクスプローシブ・フィニッシャー", "ユーティリティー・フィニッシャー", "ベネヴォレント・フィニッシャー",
       "致命的打撃", "死神", "強力誘引"
     ];
-
- 
     const baseStatOrder = [
-      "Health (Base)",
-      "Melee (Base)",
-      "Grenade (Base)",
-      "Super (Base)",
-      "Class (Base)",
-      "Weapons (Base)"
+      "Health (Base)", "Melee (Base)", "Grenade (Base)",
+      "Super (Base)", "Class (Base)", "Weapons (Base)"
     ];
-
+    const typeDisplayOrder = [
+      "ヘルメット", "ガントレット", "チェストアーマー", "レッグアーマー"
+    ];
+    function getLastTypeOrder(type) {
+      if (type.includes("クローク")) return 0;
+      if (type.includes("バンド")) return 1;
+      if (type.includes("紋章")) return 2;
+      return 99;
+    }
+    let latestGroupedResults = [];
+    let latestIncludeExotic = false;
+    let availableArchetypes = [];
+    let selectedArchetypeOrder = [];
+    const orderNumbers = ["①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫"];
 
     function getFilteredPerks(row) {
       const perkColumns = [];
@@ -86,7 +102,6 @@
       return perks.join(", ");
     }
 
-    // Main
     document.getElementById("csv-form").addEventListener("submit", function(e) {
       e.preventDefault();
       const fileInput = document.getElementById("csv-file");
@@ -96,18 +111,14 @@
         header: true,
         skipEmptyLines: true,
         complete: function(results) {
-          renderFilteredTable(results.data, includeExotic);
+          filterAndShowArchetypeSelect(results.data, includeExotic);
         }
       });
     });
 
-
-    function renderFilteredTable(rows, includeExotic) {
-
+    function filterAndShowArchetypeSelect(rows, includeExotic) {
       let data = rows.filter(r => r["Type"] !== "Armor Parts");
       if (!includeExotic) data = data.filter(r => r["Rarity"] !== "Exotic");
-
- 
       data = data.map(row => {
         row._zeroBools = baseStatOrder.map(col => Number(row[col]||0) === 0);
         row._zeroCount = row._zeroBools.filter(z => z).length;
@@ -116,7 +127,6 @@
         return row;
       }).filter(row => row._zeroCount === 3);
 
-  
       const groupMap = new Map();
       data.forEach(row => {
         let key = [
@@ -127,14 +137,10 @@
         if (!groupMap.has(keyStr)) groupMap.set(keyStr, []);
         groupMap.get(keyStr).push(row);
       });
-
-   
       let groupedResults = [];
-      let groupCounter = {};
-      let groupIndex = 1;
+      let groupCounter = {}, groupIndex = 1;
       groupMap.forEach((arr, keyStr) => {
         if (arr.length >= 2) {
-     
           arr.forEach(row => {
             if (!groupCounter[keyStr]) groupCounter[keyStr] = groupIndex++;
             row.Group = groupCounter[keyStr];
@@ -143,18 +149,105 @@
           groupedResults.push(...arr);
         }
       });
+      latestGroupedResults = groupedResults;
+      latestIncludeExotic = includeExotic;
 
+      const archetypeSet = new Set();
+      groupedResults.forEach(r => {
+        if (r["Archetype"] && r["Archetype"].trim() !== "") archetypeSet.add(r["Archetype"]);
+      });
+      availableArchetypes = Array.from(archetypeSet);
+      selectedArchetypeOrder = [...availableArchetypes];
 
-      groupedResults.sort((a, b) => {
+      const select = document.getElementById("archetype-select");
+      select.innerHTML = "";
+      availableArchetypes.forEach(arc => {
+        const opt = document.createElement("option");
+        opt.value = arc;
+        opt.textContent = arc;
+        select.appendChild(opt);
+      });
+      document.getElementById("archetype-select-area").style.display = "";
+      for (let i = 0; i < select.options.length; i++) {
+        select.options[i].selected = true;
+      }
+      updateSelectedOrderUI();
+      showTableWithOrderAndArchetype();
+
+      select.onmousedown = function(e) {
+        e.preventDefault();
+        const value = e.target.value;
+        const idx = selectedArchetypeOrder.indexOf(value);
+        if (idx === -1) {
+          selectedArchetypeOrder.push(value);
+        } else {
+          selectedArchetypeOrder.splice(idx, 1);
+        }
+        for (let i = 0; i < select.options.length; i++) {
+          select.options[i].selected = selectedArchetypeOrder.includes(select.options[i].value);
+        }
+        updateSelectedOrderUI();
+      };
+    }
+
+    function updateSelectedOrderUI() {
+      const div = document.getElementById("selected-archetype-order");
+      if (selectedArchetypeOrder.length === 0) {
+        div.innerHTML = '<span style="color:#999;">（何も選択されていません）</span>';
+      } else {
+        div.innerHTML = '選択順: ' + selectedArchetypeOrder.map((arc,i)=>`<span class="selected-order-label">${orderNumbers[i]||"?"}</span>${arc}`).join(' → ');
+      }
+    }
+
+    document.getElementById("archetype-apply").onclick = showTableWithOrderAndArchetype;
+
+    document.getElementById("archetype-reset-all").onclick = function() {
+      selectedArchetypeOrder = [...availableArchetypes];
+      const select = document.getElementById("archetype-select");
+      for (let i = 0; i < select.options.length; i++) {
+        select.options[i].selected = true;
+      }
+      updateSelectedOrderUI();
+      showTableWithOrderAndArchetype();
+    };
+
+    document.getElementById("archetype-clear-all").onclick = function() {
+      selectedArchetypeOrder = [];
+      const select = document.getElementById("archetype-select");
+      for (let i = 0; i < select.options.length; i++) {
+        select.options[i].selected = false;
+      }
+      updateSelectedOrderUI();
+      showTableWithOrderAndArchetype();
+    };
+
+    function showTableWithOrderAndArchetype() {
+      const archetypeOrderMap = {};
+      selectedArchetypeOrder.forEach((arc, idx) => { archetypeOrderMap[arc] = idx; });
+      let filtered = latestGroupedResults.filter(r => archetypeOrderMap.hasOwnProperty(r["Archetype"]));
+      filtered.sort((a, b) => {
         const rarityOrder = {"Exotic": 0, "Legendary": 1};
         const aR = rarityOrder[a["Rarity"]] ?? 2, bR = rarityOrder[b["Rarity"]] ?? 2;
         if (aR !== bR) return aR - bR;
         if (a["Equippable"] !== b["Equippable"]) return a["Equippable"].localeCompare(b["Equippable"]);
-        if (a["Type"] !== b["Type"]) return a["Type"].localeCompare(b["Type"]);
+        const aT = typeDisplayOrder.indexOf(a["Type"]);
+        const bT = typeDisplayOrder.indexOf(b["Type"]);
+        if (aT !== -1 && bT !== -1 && aT !== bT) return aT - bT;
+        if (aT === -1 && bT === -1) {
+          const aL = getLastTypeOrder(a["Type"]);
+          const bL = getLastTypeOrder(b["Type"]);
+          if (aL !== bL) return aL - bL;
+        } else if (aT === -1) {
+          return 1;
+        } else if (bT === -1) {
+          return -1;
+        }
+        const ao = archetypeOrderMap[a["Archetype"]];
+        const bo = archetypeOrderMap[b["Archetype"]];
+        if (ao !== bo) return ao - bo;
         if (a.zeroCols !== b.zeroCols) return a.zeroCols.localeCompare(b.zeroCols);
         return (a["Name"] || "").localeCompare(b["Name"] || "");
       });
-
 
       let columns = [
         { title: "Group", data: "Group" },
@@ -169,15 +262,13 @@
       baseStatOrder.forEach(col => columns.push({title: col, data: col, className: "base-stat"}));
       columns.push({title: "Total (Base)", data: "Total (Base)"});
       columns.push({title: "Zero Columns", data: "zeroCols"});
-      if (includeExotic) columns.push({title: "Filtered Perks", data: "Filtered Perks", className: "perks-column"});
-
+      if (latestIncludeExotic) columns.push({title: "Filtered Perks", data: "Filtered Perks", className: "perks-column"});
 
       let outputHTML = "";
       ["Exotic", "Legendary"].forEach(rarity => {
-        const group = groupedResults.filter(r => r["Rarity"] === rarity);
+        const group = filtered.filter(r => r["Rarity"] === rarity);
         if (group.length === 0) return;
         outputHTML += `<h2 class="${rarity === "Exotic" ? "exotic-header" : "legendary-header"}">Rarity: ${rarity}</h2>`;
-
         const byEq = {};
         group.forEach(r => {
           byEq[r["Equippable"]] = byEq[r["Equippable"]] || [];
@@ -185,7 +276,6 @@
         });
         for (const [eq, eqGroup] of Object.entries(byEq)) {
           outputHTML += `<h3>Equippable: ${eq}</h3>`;
-
           const byType = {};
           eqGroup.forEach(r => {
             byType[r["Type"]] = byType[r["Type"]] || [];
@@ -194,7 +284,6 @@
           for (const [type, typeGroup] of Object.entries(byType)) {
             outputHTML += `<h4>Type: ${type}</h4>`;
             outputHTML += `<table class="data-table" id="table-${rarity}-${eq}-${type.replace(/\s/g,"")}" style="margin-bottom:2em;"></table>`;
-  
             setTimeout(() => {
               $(`#table-${rarity}-${eq}-${type.replace(/\s/g,"")}`).DataTable({
                 data: typeGroup,
